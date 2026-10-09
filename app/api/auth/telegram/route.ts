@@ -6,7 +6,7 @@ import { z } from "zod";
 const requestSchema = z.object({ initData: z.string().min(1).max(16_000) });
 
 export async function POST(request: NextRequest) {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const botToken = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
   if (!botToken) {
     return NextResponse.json(
       { error: "Telegram bot token sozlanmagan. .env.local faylini tekshiring." },
