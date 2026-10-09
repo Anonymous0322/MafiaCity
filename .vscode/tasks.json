@@ -1,0 +1,75 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Mafia City dev server",
+			"type": "shell",
+			"command": "npm run dev -- --hostname 0.0.0.0 --port 3000",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Build Mafia City",
+			"type": "shell",
+			"command": "npm run build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Start Mafia City detached",
+			"type": "shell",
+			"command": "cmd /C \"cd /d c:\\Users\\Darling\\Desktop\\mafia-city && start /B \"\" npm.cmd run dev -- --hostname 0.0.0.0 --port 3000 > mafia-city-dev.log 2>&1\"",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Validate project build",
+			"type": "shell",
+			"command": "npx next build",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Refresh Next route types",
+			"type": "shell",
+			"command": "npx next typegen",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Check TypeScript",
+			"type": "shell",
+			"command": "npx tsc --noEmit",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "Run Mafia Telegram Mini App",
+			"type": "shell",
+			"command": "npm run dev -- --hostname 0.0.0.0 --port 3000",
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Verify hydration fix build",
+			"type": "shell",
+			"command": "npx next build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		}
+	]
+}

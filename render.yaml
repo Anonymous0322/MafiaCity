@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: mafia-city
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        value: mafiauz_robot
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
+        value: mafiauz_robot
