@@ -55,7 +55,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 }
 
 .hero {
-  min-height: 215px; width: 90%; position: relative; display: flex; align-items: center; overflow: hidden;
+  min-height: 205px;  position: relative; display: flex; align-items: center; overflow: hidden;
   border: 1px solid rgba(226, 194, 140, .17); border-radius: 23px; padding: 23px 22px;
   background:
     linear-gradient(108deg, rgba(31, 28, 24, .98) 3%, rgba(36, 29, 22, .89) 54%, rgba(53, 35, 27, .8) 100%),
@@ -96,7 +96,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 
 .quick-actions { display: grid; gap: 10px; margin: 15px 0 27px; }
 .quick-card {
-  width: 90%; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+  width: 87%; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
   border: 1px solid var(--border); border-radius: 15px; padding: 13px; background: rgba(34, 31, 27, .9);
 }
 .quick-card > span:nth-child(2) { flex: 1; min-width: 0; }
@@ -108,7 +108,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .quick-card strong { display: block; font-size: 13px; font-weight: 600; }
 .quick-card small { display: block; overflow: hidden; margin-top: 4px; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .join-form {
-  display: flex; align-items: center; gap: 10px; min-height: 55px; max-width: 90%;
+  display: flex; align-items: center; gap: 10px; min-height: 55px; max-width: 87%;
   border: 1px solid var(--border);
   border-radius: 15px; padding: 7px 8px; background: rgba(34, 31, 27, .82);
 }
