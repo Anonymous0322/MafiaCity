@@ -18,7 +18,10 @@
     "db:check": "node scripts/db-check.mjs",
     "db:lint": "node scripts/lint-sql.mjs",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:secrets && npm run db:lint && npm run build",
-    "test:secrets": "node tests/secrets-scan.mjs"
+    "test:secrets": "node tests/secrets-scan.mjs",
+    "test:gameplay": "node tests/gameplay.mjs",
+    "verify:full": "npm run verify && npm run test:e2e && npm run test:layout && npm run test:navigation && npm run test:gameplay",
+    "test:navigation": "node tests/navigation.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",
@@ -26,6 +29,7 @@
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "ws": "^8.22.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -34,6 +38,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
     "pg": "^8.23.1",

@@ -56,15 +56,30 @@ Never prefix a secret with `NEXT_PUBLIC_`, and never commit `.env.local`.
 Schema and transactional operations live in
 [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
 
+### Table names are prefixed `mc_`
+
+The Supabase project this app points at also holds tables from an **older,
+unrelated application** (`lobbies`, `lobby_players`, `users`, `messages`,
+`friends`, `friendships`, `room_messages`, `room_players` — some of them
+contain rows). PostgREST on Supabase only exposes the `public` schema, so a
+separate schema is not an option, and those tables are never dropped or altered.
+Every table this project owns is therefore prefixed:
+
 | Table | Purpose |
 | --- | --- |
-| `players` | One row per verified Telegram user, with the aggregate statistics and rating. |
-| `lobbies` | A room. `state` holds the authoritative live game document; `version` drives change detection. |
-| `lobby_members` | Seat assignment, alive flag, host flag and role. Survives an in-progress match. |
-| `games` | One row per started match — the source of truth for statistics. |
-| `game_players` | Role and outcome per player per game. `unique (game_id, player_id)` makes updates idempotent. |
-| `game_events` | Structured match log (`message_key` + `params`, translated on the client). |
-| `investigations` | Detective results, readable only by the owning player. |
+| `mc_players` | One row per verified Telegram user, with aggregate statistics and rating. |
+| `mc_lobbies` | A room. `state` holds the authoritative live game document; `version` drives change detection. |
+| `mc_lobby_members` | Seat assignment, alive flag, host flag and role. Survives an in-progress match. |
+| `mc_games` | One row per started match — the source of truth for statistics. |
+| `mc_game_players` | Role and outcome per player per game. `unique (game_id, player_id)` makes updates idempotent. |
+| `mc_game_events` | Structured match log (`message_key` + `params`, translated on the client). |
+| `mc_investigations` | Detective results, readable only by the owning player. |
+
+If you ever remove the old tables, you can drop the `mc_` prefix; nothing in the
+code hardcodes it beyond these names.
+
+| Table | Purpose |
+| --- | --- |
 
 Atomic transitions are implemented as Postgres functions so a double tap, a
 retried request or two racing devices cannot corrupt state:
@@ -133,16 +148,31 @@ tests/                     unit, e2e and browser layout suites
 ## Verification
 
 ```sh
-npm run verify         # lint + typecheck + unit tests + production build
+npm run verify         # lint + typecheck + 82 unit tests + secrets + SQL + build
 npm run test:e2e       # boots `next start` and exercises the HTTP API
 npm run test:layout    # measures quick-card / join-form in uz, ru, en
+npm run test:gameplay  # 6 real players, real DB, one full match end to end
 npm run db:check       # live read/write verification against the project
+npm run verify:full    # all of the above
 ```
+
+`test:gameplay` signs real Telegram `initData` with the real bot token, creates
+six players, runs a whole match (lobby → join → host start → night → day →
+verdict) and asserts role secrecy, host authorisation, duplicate-vote
+rejection, phase validation and the persisted statistics. It needs a reachable
+database.
 
 `test:layout` drives the locally installed Chrome/Edge (override with
 `CHROME_PATH`) and asserts that `.quick-card` and `.join-form` measure **the
 same width in every language** at 320 / 360 / 390 / 430 / 768 / 1280 px, with no
 page overflow and no clipped text.
+
+## Node version
+
+The project runs on Node 20 and 22. `@supabase/realtime-js` has no WebSocket
+implementation on Node 20, so `ws` is installed and passed as the realtime
+transport; `ws` and `pg` are listed in `serverExternalPackages` because the
+server bundler otherwise mangles `Buffer` internals inside `ws`.
 
 ## Deploying
 

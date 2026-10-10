@@ -14,6 +14,7 @@ import {
   MIN_PLAYERS,
   presentLobby,
   presentLobbySummaries,
+  resolveLobby,
   startLobbyGame,
   submitGameAction,
   touchPresence,
@@ -56,12 +57,12 @@ export async function GET(request: NextRequest) {
     const lobbyId = params.get("id");
 
     if (lobbyId) {
-      const lobby = await getLobbyById(lobbyId);
-      if (!lobby) throw new AppError("not_found", "lobby_not_found", 404);
+      // the client may pass either the room code or the uuid
+      const lobby = await resolveLobby(lobbyId);
       // A phase that has outlived its window is force-resolved on read, so an
       // abandoned table always makes progress.
       await enforcePhaseDeadline(lobby);
-      const current = (await getLobbyById(lobbyId)) ?? lobby;
+      const current = (await resolveLobby(lobbyId)) ?? lobby;
       const view = await presentLobby(current, playerId);
       const since = Number(params.get("since"));
       if (Number.isFinite(since) && since === view.version) {

@@ -72,6 +72,25 @@ async function rest(path, init = {}) {
   return { status: response.status, body };
 }
 
+// PostgREST caches the schema; ask it to reload before probing.
+await (async () => {
+  try {
+    const { Client } = await import("pg");
+    if (!process.env.DATABASE_URL) return;
+    const client = new Client({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 15000,
+    });
+    await client.connect();
+    await client.query("notify pgrst, 'reload schema'");
+    await client.end();
+    console.log("[db:check] asked PostgREST to reload its schema cache");
+  } catch {
+    console.log("[db:check] could not notify PostgREST (no DATABASE_URL) — continuing");
+  }
+})();
+
 const results = [];
 function record(name, ok, detail) {
   results.push({ name, ok, detail });
@@ -83,20 +102,20 @@ const telegramId = 9_000_000_000_000_000n + BigInt(stamp % 1_000_000);
 let createdId = null;
 
 // 1. schema present -----------------------------------------------------------
-const probe = await rest("players?select=id&limit=1");
+const probe = await rest("mc_players?select=id&limit=1");
 if (probe.status === 200) {
-  record("schema: players table reachable", true);
+  record("schema: mc_players table reachable", true);
 } else if (probe.status === 404 && String(probe.body?.message ?? "").includes("schema cache")) {
-  record("schema: players table reachable", false, "table missing — run `npm run db:migrate`");
+  record("schema: mc_players table reachable", false, "table missing — run `npm run db:migrate`");
   console.log("\nAborting: schema not provisioned.");
   process.exit(1);
 } else {
-  record("schema: players table reachable", false, `HTTP ${probe.status}`);
+  record("schema: mc_players table reachable", false, `HTTP ${probe.status}`);
   process.exit(1);
 }
 
 // 2. INSERT -------------------------------------------------------------------
-const insert = await rest("players", {
+const insert = await rest("mc_players", {
   method: "POST",
   headers: { Prefer: "return=representation" },
   body: JSON.stringify({
@@ -118,7 +137,7 @@ if (insert.status === 201 && Array.isArray(insert.body) && insert.body[0]?.id) {
 }
 
 // 3. SELECT -------------------------------------------------------------------
-const read = await rest(`players?id=eq.${createdId}&select=id,display_name,rating`);
+const read = await rest(`mc_players?id=eq.${createdId}&select=id,display_name,rating`);
 if (read.status === 200 && read.body?.[0]?.display_name === `dbcheck_${stamp}`) {
   record("read: SELECT player by id", true, `rating=${read.body[0].rating}`);
 } else {
@@ -126,11 +145,11 @@ if (read.status === 200 && read.body?.[0]?.display_name === `dbcheck_${stamp}`) 
 }
 
 // 4. UPDATE -------------------------------------------------------------------
-const update = await rest(`players?id=eq.${createdId}`, {
+const update = await rest(`mc_players?id=eq.${createdId}`, {
   method: "PATCH",
   body: JSON.stringify({ language: "ru" }),
 });
-const updated = await rest(`players?id=eq.${createdId}&select=language`);
+const updated = await rest(`mc_players?id=eq.${createdId}&select=language`);
 if (updated.status === 200 && updated.body?.[0]?.language === "ru") {
   record("write: UPDATE player", true);
 } else {
@@ -138,7 +157,7 @@ if (updated.status === 200 && updated.body?.[0]?.language === "ru") {
 }
 
 // 5. Atomic RPC: join_lobby ----------------------------------------------------
-const lobbyInsert = await rest("lobbies", {
+const lobbyInsert = await rest("mc_lobbies", {
   method: "POST",
   body: JSON.stringify({
     code: `CHK-${stamp.toString().slice(-6)}`,
@@ -188,13 +207,13 @@ if (lobbyInsert.status === 201 && lobbyInsert.body?.[0]?.id) {
   });
   record("rpc: leaderboard", board.status === 200, `HTTP ${board.status}`);
 
-  await rest(`lobbies?id=eq.${lobbyId}`, { method: "DELETE" });
+  await rest(`mc_lobbies?id=eq.${lobbyId}`, { method: "DELETE" });
 } else {
   record("write: INSERT lobby", false, `HTTP ${lobbyInsert.status} ${JSON.stringify(lobbyInsert.body)}`);
 }
 
 // 6. DELETE -------------------------------------------------------------------
-const cleanup = await rest(`players?id=eq.${createdId}`, { method: "DELETE" });
+const cleanup = await rest(`mc_players?id=eq.${createdId}`, { method: "DELETE" });
 record("write: DELETE player", cleanup.status >= 200 && cleanup.status < 300, `HTTP ${cleanup.status}`);
 
 const failed = results.filter((result) => !result.ok);

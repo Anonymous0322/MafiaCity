@@ -163,15 +163,46 @@ const PG_ERROR_MAP: Record<string, AppErrorCode> = {
   duplicate_key: "duplicate",
 };
 
+/** PostgREST returns { message, code, details, hint }; keep the useful parts. */
+function describeError(error: unknown): string {
+  if (!error || typeof error !== "object") return String(error);
+  const record = error as Record<string, unknown>;
+  const parts = [record.message, record.details, record.hint, record.code]
+    .filter((part) => typeof part === "string" && part.length > 0)
+    .map((part) => String(part).trim());
+  if (parts.length === 0) {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return parts.join(" | ");
+}
+
 function translatePgError(error: unknown): AppError {
-  const message = error instanceof Error ? error.message : String(error);
-  const code = PG_ERROR_MAP[message];
-  if (code) {
+  const raw = describeError(error);
+  // Postgres wraps our own raise_exception text in a longer message
+  const key = Object.keys(PG_ERROR_MAP).find((candidate) => raw.includes(candidate));
+  if (key) {
+    const code = PG_ERROR_MAP[key];
     const status =
       code === "not_found" ? 404 : code === "forbidden" ? 403 : code === "unauthorized" ? 401 : 409;
-    return new AppError(code, message, status);
+    return new AppError(code, key, status);
   }
-  return new AppError("unknown", message, 500);
+  // unique_violation from PostgREST arrives as code 23505
+  const pgCode = (error as { code?: string } | null)?.code;
+  if (pgCode === "23505") return new AppError("duplicate", "duplicate", 409);
+  if (pgCode === "42501") return new AppError("forbidden", "forbidden", 403);
+  if (pgCode === "23503") return new AppError("invalid", "foreign_key_violation", 400);
+  if (pgCode === "23514") return new AppError("invalid", "check_violation", 400);
+  // a value that does not fit the column type (e.g. a room code sent as a uuid)
+  if (pgCode === "22P02") return new AppError("invalid", "invalid_identifier", 400);
+  if (pgCode === "PGRST108") return new AppError("unknown", "bad_embed", 500);
+  if (pgCode === "PGRST205") return new AppError("not_found", "table_missing", 500);
+
+  console.error("[db] unhandled PostgREST error:", raw);
+  return new AppError("unknown", "database_error", 500);
 }
 
 function db(): ReturnType<typeof getSupabase> {
@@ -223,7 +254,7 @@ export type TelegramProfileInput = {
  */
 export async function upsertPlayer(input: TelegramProfileInput): Promise<PlayerRow> {
   const { data, error } = await db()
-    .from("players")
+    .from("mc_players")
     .upsert(
       {
         telegram_id: input.telegramId,
@@ -244,7 +275,7 @@ export async function upsertPlayer(input: TelegramProfileInput): Promise<PlayerR
 }
 
 export async function getPlayerById(id: string): Promise<PlayerRow | null> {
-  const { data, error } = await db().from("players").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await db().from("mc_players").select("*").eq("id", id).maybeSingle();
   if (error) throw translatePgError(error);
   return (data as PlayerRow | null) ?? null;
 }
@@ -269,7 +300,7 @@ export function generateLobbyCode(): string {
 
 export async function listOpenLobbies(): Promise<LobbyRow[]> {
   const { data, error } = await db()
-    .from("lobbies")
+    .from("mc_lobbies")
     .select("*")
     .eq("status", "waiting")
     .eq("mode", "PUBLIC")
@@ -280,7 +311,7 @@ export async function listOpenLobbies(): Promise<LobbyRow[]> {
 }
 
 export async function getLobbyById(id: string): Promise<LobbyRow | null> {
-  const { data, error } = await db().from("lobbies").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await db().from("mc_lobbies").select("*").eq("id", id).maybeSingle();
   if (error) throw translatePgError(error);
   return (data as LobbyRow | null) ?? null;
 }
@@ -288,7 +319,7 @@ export async function getLobbyById(id: string): Promise<LobbyRow | null> {
 export async function getLobbyByCode(code: string): Promise<LobbyRow | null> {
   const normalised = code.trim().toUpperCase();
   const { data, error } = await db()
-    .from("lobbies")
+    .from("mc_lobbies")
     .select("*")
     .eq("code", normalised)
     .maybeSingle();
@@ -299,16 +330,16 @@ export async function getLobbyByCode(code: string): Promise<LobbyRow | null> {
 /** The lobby a player is currently sitting in (waiting/starting/playing). */
 export async function getActiveLobbyForPlayer(playerId: string): Promise<LobbyRow | null> {
   const { data, error } = await db()
-    .from("lobby_members")
-    .select("lobby_id, lobbies!inner(*)")
+    .from("mc_lobby_members")
+    .select("lobby_id, mc_lobbies!inner(*)")
     .eq("player_id", playerId)
     .is("left_at", null)
-    .in("lobbies.status", ["waiting", "starting", "playing"])
+    .in("mc_lobbies.status", ["waiting", "starting", "playing"])
     .limit(1)
     .maybeSingle();
   if (error) throw translatePgError(error);
-  const row = data as { lobby_id: string; lobbies: LobbyRow } | null;
-  return row?.lobbies ?? null;
+  const row = data as { lobby_id: string; mc_lobbies: LobbyRow } | null;
+  return row?.mc_lobbies ?? null;
 }
 
 export async function createLobby(input: {
@@ -321,7 +352,7 @@ export async function createLobby(input: {
   // retry on the (astronomically unlikely) code collision
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const { data, error } = await db()
-      .from("lobbies")
+      .from("mc_lobbies")
       .insert({
         code: generateLobbyCode(),
         name: input.name,
@@ -341,17 +372,28 @@ export async function createLobby(input: {
   throw new AppError("conflict", "Could not allocate a room code", 409);
 }
 
-async function requireLobbyByReference(reference: string): Promise<LobbyRow> {
-  const byId = await getLobbyById(reference);
-  if (byId) return byId;
-  const byCode = await getLobbyByCode(reference);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * A lobby can be referenced by its code (`MAF-XXXXXX`) or its uuid. The shape
+ * has to be checked first: sending a code into a uuid column makes Postgres
+ * raise `invalid_text_representation`, which would surface as a 500 instead of
+ * a clean "not found".
+ */
+export async function resolveLobby(reference: string): Promise<LobbyRow> {
+  const value = reference.trim();
+  if (UUID_PATTERN.test(value)) {
+    const byId = await getLobbyById(value);
+    if (byId) return byId;
+  }
+  const byCode = await getLobbyByCode(value);
   if (byCode) return byCode;
   throw new AppError("not_found", "lobby_not_found", 404);
 }
 
 /** Join through the transactional RPC so seat/race conditions are impossible. */
 export async function joinLobby(lobbyRef: string, playerId: string): Promise<LobbyRow> {
-  const lobby = await requireLobbyByReference(lobbyRef);
+  const lobby = await resolveLobby(lobbyRef);
   const { data, error } = await db().rpc("join_lobby", {
     p_lobby_id: lobby.id,
     p_player_id: playerId,
@@ -363,7 +405,7 @@ export async function joinLobby(lobbyRef: string, playerId: string): Promise<Lob
 }
 
 export async function leaveLobby(lobbyRef: string, playerId: string): Promise<void> {
-  const lobby = await requireLobbyByReference(lobbyRef);
+  const lobby = await resolveLobby(lobbyRef);
   const { error } = await db().rpc("leave_lobby", {
     p_lobby_id: lobby.id,
     p_player_id: playerId,
@@ -373,7 +415,7 @@ export async function leaveLobby(lobbyRef: string, playerId: string): Promise<vo
 
 /** Host-only, atomic, single-shot. Delegates validation to Postgres. */
 export async function startLobbyGame(lobbyRef: string, playerId: string): Promise<LobbyRow> {
-  const lobby = await requireLobbyByReference(lobbyRef);
+  const lobby = await resolveLobby(lobbyRef);
   const { data, error } = await db().rpc("start_game", {
     p_lobby_id: lobby.id,
     p_player_id: playerId,
@@ -390,7 +432,7 @@ export async function startLobbyGame(lobbyRef: string, playerId: string): Promis
 
 export async function getMembers(lobbyId: string): Promise<MemberRow[]> {
   const { data, error } = await db()
-    .from("lobby_members")
+    .from("mc_lobby_members")
     .select("*")
     .eq("lobby_id", lobbyId)
     .is("left_at", null)
@@ -401,7 +443,7 @@ export async function getMembers(lobbyId: string): Promise<MemberRow[]> {
 
 export async function getPlayersByIds(ids: string[]): Promise<Map<string, PlayerRow>> {
   if (ids.length === 0) return new Map();
-  const { data, error } = await db().from("players").select("*").in("id", ids);
+  const { data, error } = await db().from("mc_players").select("*").in("id", ids);
   if (error) throw translatePgError(error);
   const map = new Map<string, PlayerRow>();
   for (const row of (data ?? []) as PlayerRow[]) map.set(row.id, row);
@@ -411,7 +453,7 @@ export async function getPlayersByIds(ids: string[]): Promise<Map<string, Player
 /** Heartbeat: keeps "connected" fresh without blocking gameplay on disconnect. */
 export async function touchPresence(playerId: string): Promise<void> {
   await db()
-    .from("players")
+    .from("mc_players")
     .update({ last_seen_at: new Date().toISOString() })
     .eq("id", playerId)
     .then(({ error }) => {
@@ -428,7 +470,7 @@ export function isOnline(row: PlayerRow | undefined): boolean {
 
 async function getGameId(lobbyId: string): Promise<string | null> {
   const { data, error } = await db()
-    .from("games")
+    .from("mc_games")
     .select("id")
     .eq("lobby_id", lobbyId)
     .maybeSingle();
@@ -438,7 +480,7 @@ async function getGameId(lobbyId: string): Promise<string | null> {
 
 async function getEvents(gameId: string, limit = 40): Promise<EventRow[]> {
   const { data, error } = await db()
-    .from("game_events")
+    .from("mc_game_events")
     .select("id, round_number, phase, kind, message_key, params")
     .eq("game_id", gameId)
     .order("id", { ascending: false })
@@ -452,7 +494,7 @@ async function appendEvent(
   lobbyId: string,
   input: { round: number; phase: GamePhase; kind: string; key: string; params?: Record<string, string | number> },
 ): Promise<void> {
-  const { error } = await db().from("game_events").insert({
+  const { error } = await db().from("mc_game_events").insert({
     game_id: gameId,
     lobby_id: lobbyId,
     round_number: input.round,
@@ -470,7 +512,7 @@ async function getLatestInvestigation(
   detectiveId: string,
 ): Promise<InvestigationRow | null> {
   const { data, error } = await db()
-    .from("investigations")
+    .from("mc_investigations")
     .select("detective_id, target_id, is_mafia, round_number")
     .eq("game_id", gameId)
     .eq("detective_id", detectiveId)
@@ -483,7 +525,7 @@ async function getLatestInvestigation(
 
 async function persistState(lobbyId: string, state: LobbyState): Promise<void> {
   const { error } = await db()
-    .from("lobbies")
+    .from("mc_lobbies")
     .update({ state: state as unknown as Record<string, unknown>, version: Date.now() })
     .eq("id", lobbyId);
   if (error) throw translatePgError(error);
@@ -565,14 +607,14 @@ export async function presentLobby(lobby: LobbyRow, viewerId: string): Promise<L
     return seat;
   });
 
+  // Look the role up by seat id: filtering `seats` first would shift the
+  // indices and could hand a player the wrong "ally".
+  const roleBySeat = new Map(members.map((member) => [member.player_id, member.role]));
   const allies: PublicPlayer[] =
     viewerRole === "mafia"
       ? seats
           .filter((seat) => seat.id !== viewerId && seat.alive)
-          .filter((_, index) => {
-            const member = members[index];
-            return member?.role === "mafia";
-          })
+          .filter((seat) => roleBySeat.get(seat.id) === "mafia")
           .map((seat) => ({ id: seat.id, name: seat.name, username: seat.username, avatar: seat.avatar }))
       : [];
 
@@ -651,7 +693,7 @@ export async function presentLobbySummaries(lobbies: LobbyRow[]): Promise<LobbyS
   if (lobbies.length === 0) return [];
   const ids = lobbies.map((lobby) => lobby.id);
   const { data, error } = await db()
-    .from("lobby_members")
+    .from("mc_lobby_members")
     .select("lobby_id, player_id")
     .in("lobby_id", ids)
     .is("left_at", null);
@@ -660,7 +702,7 @@ export async function presentLobbySummaries(lobbies: LobbyRow[]): Promise<LobbyS
 
   const hostIds = lobbies.map((lobby) => lobby.host_id);
   const { data: hostRows, error: hostError } = await db()
-    .from("players")
+    .from("mc_players")
     .select("*")
     .in("id", [...new Set(hostIds)]);
   if (hostError) throw translatePgError(hostError);
@@ -679,7 +721,7 @@ export async function presentLobbySummaries(lobbies: LobbyRow[]): Promise<LobbyS
 /* -------------------------------------------------------------------------- */
 
 async function loadMatchContext(lobbyRef: string, playerId: string) {
-  const lobby = await requireLobbyByReference(lobbyRef);
+  const lobby = await resolveLobby(lobbyRef);
   const members = await getMembers(lobby.id);
   const me = members.find((member) => member.player_id === playerId);
   if (!me) throw new AppError("not_member", "not_member", 403);
@@ -747,7 +789,7 @@ export async function submitGameAction(
     };
     if (!allNightActionsSubmitted(engineState, enginePlayers)) {
       await persistState(lobby.id, state);
-      return presentLobby(await requireLobbyByReference(lobbyRef), playerId);
+      return presentLobby(await resolveLobby(lobbyRef), playerId);
     }
 
     const outcome = resolveNight(enginePlayers, state.nightActions);
@@ -755,7 +797,7 @@ export async function submitGameAction(
     if (outcome.investigatedTargetId && outcome.detectiveId) {
       const subject = enginePlayers.find((p) => p.id === outcome.investigatedTargetId);
       await db()
-        .from("investigations")
+        .from("mc_investigations")
         .insert({
           game_id: gameId,
           detective_id: outcome.detectiveId,
@@ -814,7 +856,7 @@ export async function submitGameAction(
       });
       await resetPhase(lobby.id, "day", lobby.round_number);
     }
-    return presentLobby(await requireLobbyByReference(lobbyRef), playerId);
+    return presentLobby(await resolveLobby(lobbyRef), playerId);
   }
 
   // ---- vote ---------------------------------------------------------------
@@ -833,7 +875,7 @@ export async function submitGameAction(
 
   if (!allVotesSubmitted(engineState, enginePlayers)) {
     await persistState(lobby.id, state);
-    return presentLobby(await requireLobbyByReference(lobbyRef), playerId);
+    return presentLobby(await resolveLobby(lobbyRef), playerId);
   }
 
   const outcome = resolveVotes(enginePlayers, state.votes);
@@ -868,21 +910,9 @@ export async function submitGameAction(
       kind: "phase",
       key: "event.nightFalls",
     });
-    await persistState(lobby.id, {
-      nightActions: { mafiaVotes: {} },
-      votes: {},
-      investigations: {},
-      phaseStartedAt: new Date().toISOString(),
-    });
-    await db()
-      .from("lobbies")
-      .update({ phase: "night", round: lobby.round_number + 1, version: Date.now() })
-      .eq("id", lobby.id)
-      .then(({ error }) => {
-        if (error) throw translatePgError(error);
-        });
+    await resetPhase(lobby.id, "night", lobby.round_number + 1);
   }
-  return presentLobby(await requireLobbyByReference(lobbyRef), playerId);
+  return presentLobby(await resolveLobby(lobbyRef), playerId);
 }
 
 function actionError(code: string): AppError {
@@ -928,7 +958,7 @@ export async function enforcePhaseDeadline(lobby: LobbyRow, now = Date.now()): P
   const members = await getMembers(lobby.id);
   if (members.length === 0) {
     await db()
-      .from("lobbies")
+      .from("mc_lobbies")
       .update({ status: "cancelled", phase: "finished", version: now, state: {}, finished_at: new Date().toISOString() })
       .eq("id", lobby.id)
       .then(({ error }) => {
@@ -999,7 +1029,7 @@ async function syncAliveFlags(members: MemberRow[], enginePlayers: GamePlayer[])
     const member = members.find((entry) => entry.player_id === player.id);
     if (member && member.is_alive !== player.alive) {
       await db()
-        .from("lobby_members")
+        .from("mc_lobby_members")
         .update({ is_alive: player.alive })
         .eq("id", member.id)
         .then(({ error }) => {
@@ -1011,7 +1041,7 @@ async function syncAliveFlags(members: MemberRow[], enginePlayers: GamePlayer[])
 
 async function resetPhase(lobbyId: string, phase: "night" | "day", round: number): Promise<void> {
   await db()
-    .from("lobbies")
+    .from("mc_lobbies")
     .update({
       phase,
       round_number: round,
@@ -1063,7 +1093,7 @@ export async function getStats(playerId: string): Promise<PlayerStats> {
 
   const [{ count: survivedCount }, { data: rankRow }] = await Promise.all([
     db()
-      .from("game_players")
+      .from("mc_game_players")
       .select("id", { count: "exact", head: true })
       .eq("player_id", playerId)
       .eq("survived", true),
@@ -1095,12 +1125,12 @@ export async function getStats(playerId: string): Promise<PlayerStats> {
 
 export async function getMatchHistory(playerId: string, limit = 15): Promise<MatchHistoryEntry[]> {
   const { data, error } = await db()
-    .from("game_players")
+    .from("mc_game_players")
     .select(
-      "game_id, role, won, survived, rating_delta, rating_after, created_at, games!inner(id, winner, rounds_played, player_count, finished_at, status)",
+      "game_id, role, won, survived, rating_delta, rating_after, created_at, mc_games!inner(id, winner, rounds_played, player_count, finished_at, status)",
     )
     .eq("player_id", playerId)
-    .eq("games.status", "completed")
+    .eq("mc_games.status", "completed")
     .order("created_at", { ascending: false })
     .limit(limit);
   if (error) throw translatePgError(error);
@@ -1113,11 +1143,11 @@ export async function getMatchHistory(playerId: string, limit = 15): Promise<Mat
     rating_delta: number | string;
     rating_after: number | string | null;
     created_at: string;
-    games: GameRow | GameRow[];
+    mc_games: GameRow | GameRow[];
   }>;
 
   return rows.map((row) => {
-    const game = (Array.isArray(row.games) ? row.games[0] : row.games) as GameRow;
+    const game = (Array.isArray(row.mc_games) ? row.mc_games[0] : row.mc_games) as GameRow;
     return {
       gameId: row.game_id,
       playedAt: game.finished_at ?? row.created_at,
@@ -1233,7 +1263,7 @@ export async function checkDatabase(): Promise<DatabaseHealth> {
   }
   const started = Date.now();
   try {
-    const { error } = await db().from("players").select("id").limit(1);
+    const { error } = await db().from("mc_players").select("id").limit(1);
     const latencyMs = Date.now() - started;
     if (error) {
       return {

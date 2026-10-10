@@ -109,10 +109,9 @@ export async function POST(request: NextRequest) {
     });
     return response;
   } catch (error) {
-    console.error(
-      "[auth/telegram] profile persistence failed:",
-      error instanceof Error ? error.message : "unknown",
-    );
+    const reason = error instanceof Error ? error.message : "unknown error";
+    console.error("[auth/telegram] profile persistence failed:", reason);
+    // The browser only ever sees a stable code; the detail stays in the logs.
     return NextResponse.json(
       { error: "profile_persist_failed", code: "database_unavailable" },
       { status: 503 },

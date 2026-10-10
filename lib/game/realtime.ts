@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { WebSocket } from "ws";
 import { getDbConfig } from "@/lib/db/client";
 
 /**
@@ -28,6 +29,8 @@ function getClient(): SupabaseClient | null {
     client = createClient(config.url, config.key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
       global: { headers: { "x-application-name": "mafia-city-realtime" } },
+      // Node 20 has no global WebSocket; without this the constructor throws.
+      realtime: { transport: WebSocket as unknown as typeof globalThis.WebSocket },
     });
   }
   return client;

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { WebSocket } from "ws";
 
 /**
  * Supabase configuration is read from the environment only, never from the
@@ -15,7 +16,7 @@ export type DbConfig = {
 
 let cachedConfig: DbConfig | null = null;
 
-export function getDbConfig(): DbConfig | null {
+export function resolveDbConfig(): DbConfig | null {
   if (cachedConfig) return cachedConfig;
   const url = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
   const secret =
@@ -31,8 +32,21 @@ export function getDbConfig(): DbConfig | null {
   return cachedConfig;
 }
 
-export function isDatabaseConfigured(): boolean {
-  return getDbConfig() !== null;
+const getDbConfig = resolveDbConfig;
+
+export { getDbConfig };
+
+export function isDatabaseConfigured(): boolean {  return getDbConfig() !== null;
+}
+
+/**
+ * Node 20 has no global WebSocket, and @supabase/realtime-js throws from the
+ * client *constructor* when it cannot find one — which made every server-side
+ * call fail before it even reached the network. Handing it `ws` fixes that and
+ * keeps the app working on the Node version the project pins.
+ */
+function serverRealtimeOptions() {
+  return { transport: WebSocket as unknown as typeof globalThis.WebSocket };
 }
 
 let cachedClient: SupabaseClient | null = null;
@@ -45,14 +59,14 @@ export function getSupabase(): SupabaseClient {
   cachedClient = createClient(config.url, config.key, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { headers: { "x-application-name": "mafia-city" } },
+    realtime: serverRealtimeOptions(),
   });
   return cachedClient;
 }
 
 export class DatabaseNotConfiguredError extends Error {
   constructor() {
-    super("Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY in .env.local");
+    super("Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.local");
     this.name = "DatabaseNotConfiguredError";
   }
 }
-

@@ -1,5 +1,10 @@
 -- =============================================================================
 -- Mafia City — schema bootstrap
+--
+-- All tables live in `public` (the only schema PostgREST exposes on Supabase)
+-- and are prefixed with `mc_` because the project already contains tables from
+-- an older, unrelated app (friends, friendships, lobbies, lobby_players, messages, room_messages, room_players, users). Those tables are never read,
+-- written or altered by this project.
 -- Run once against the Supabase project (SQL editor or psql).
 -- Idempotent: safe to re-run.
 -- =============================================================================
@@ -9,7 +14,7 @@ create extension if not exists "pgcrypto";
 -- -----------------------------------------------------------------------------
 -- players: one row per authenticated Telegram user
 -- -----------------------------------------------------------------------------
-create table if not exists public.players (
+create table if not exists public.mc_players (
   id             uuid primary key default gen_random_uuid(),
   telegram_id    bigint unique not null,
   username       text,
@@ -34,8 +39,8 @@ create table if not exists public.players (
   last_seen_at   timestamptz not null default now()
 );
 
-create index if not exists players_rating_idx  on public.players (rating desc, games_won desc, id);
-create index if not exists players_played_idx on public.players (games_played desc);
+create index if not exists mc_players_rating_idx  on public.mc_players (rating desc, games_won desc, id);
+create index if not exists mc_players_played_idx on public.mc_players (games_played desc);
 
 -- -----------------------------------------------------------------------------
 -- lobbies: a room. Holds the authoritative live game document in `state`.
@@ -43,7 +48,7 @@ create index if not exists players_played_idx on public.players (games_played de
 --   phase   = round phase (waiting / night / day / finished)
 --   version = monotonic counter; clients poll `?since=<version>` for changes.
 -- -----------------------------------------------------------------------------
-create table if not exists public.lobbies (
+create table if not exists public.mc_lobbies (
   id           uuid primary key default gen_random_uuid(),
   code         text not null unique,
   name         text not null,
@@ -53,7 +58,7 @@ create table if not exists public.lobbies (
   phase        text not null default 'waiting'
                  check (phase in ('waiting', 'night', 'day', 'finished')),
   round_number  integer not null default 0,
-  host_id      uuid not null references public.players (id) on delete cascade,
+  host_id      uuid not null references public.mc_players (id) on delete cascade,
   max_players  integer not null default 8 check (max_players between 3 and 20),
   winner       text check (winner in ('mafia', 'town')),
   version      bigint not null default 1,
@@ -64,17 +69,17 @@ create table if not exists public.lobbies (
   finished_at  timestamptz
 );
 
-create index if not exists lobbies_open_idx  on public.lobbies (status, mode, created_at desc);
-create index if not exists lobbies_host_idx  on public.lobbies (host_id);
+create index if not exists mc_lobbies_open_idx  on public.mc_lobbies (status, mode, created_at desc);
+create index if not exists mc_lobbies_host_idx  on public.mc_lobbies (host_id);
 
 -- -----------------------------------------------------------------------------
 -- lobby_members: seat assignment. Presence rows survive an in-game game so a
 -- refreshing player keeps their seat, role and alive flag.
 -- -----------------------------------------------------------------------------
-create table if not exists public.lobby_members (
+create table if not exists public.mc_lobby_members (
   id         uuid primary key default gen_random_uuid(),
-  lobby_id   uuid not null references public.lobbies (id) on delete cascade,
-  player_id  uuid not null references public.players (id) on delete cascade,
+  lobby_id   uuid not null references public.mc_lobbies (id) on delete cascade,
+  player_id  uuid not null references public.mc_players (id) on delete cascade,
   seat       integer not null,
   is_host    boolean not null default false,
   is_alive   boolean not null default true,
@@ -84,15 +89,15 @@ create table if not exists public.lobby_members (
   unique (lobby_id, player_id)
 );
 
-create index if not exists lobby_members_lobby_idx  on public.lobby_members (lobby_id);
-create index if not exists lobby_members_player_idx on public.lobby_members (player_id) where left_at is null;
+create index if not exists mc_lobby_members_lobby_idx  on public.mc_lobby_members (lobby_id);
+create index if not exists mc_lobby_members_player_idx on public.mc_lobby_members (player_id) where left_at is null;
 
 -- -----------------------------------------------------------------------------
 -- games: one row per started match. The single source of truth for statistics.
 -- -----------------------------------------------------------------------------
-create table if not exists public.games (
+create table if not exists public.mc_games (
   id            uuid primary key default gen_random_uuid(),
-  lobby_id      uuid not null unique references public.lobbies (id) on delete cascade,
+  lobby_id      uuid not null unique references public.mc_lobbies (id) on delete cascade,
   status        text not null default 'active'
                   check (status in ('active', 'completed', 'cancelled')),
   winner        text check (winner in ('mafia', 'town')),
@@ -103,16 +108,16 @@ create table if not exists public.games (
   created_at    timestamptz not null default now()
 );
 
-create index if not exists games_player_history_idx on public.games (status, finished_at desc);
+create index if not exists mc_games_player_history_idx on public.mc_games (status, finished_at desc);
 
 -- -----------------------------------------------------------------------------
 -- game_players: role + outcome per player per game.
 --   `unique (game_id, player_id)` makes statistics application idempotent.
 -- -----------------------------------------------------------------------------
-create table if not exists public.game_players (
+create table if not exists public.mc_game_players (
   id            uuid primary key default gen_random_uuid(),
-  game_id       uuid not null references public.games (id) on delete cascade,
-  player_id     uuid not null references public.players (id) on delete cascade,
+  game_id       uuid not null references public.mc_games (id) on delete cascade,
+  player_id     uuid not null references public.mc_players (id) on delete cascade,
   role          text not null check (role in ('mafia', 'doctor', 'detective', 'citizen')),
   is_alive      boolean not null default true,
   survived      boolean not null default false,
@@ -123,17 +128,17 @@ create table if not exists public.game_players (
   unique (game_id, player_id)
 );
 
-create index if not exists game_players_player_idx on public.game_players (player_id, created_at desc);
-create index if not exists game_players_game_idx   on public.game_players (game_id);
+create index if not exists mc_game_players_player_idx on public.mc_game_players (player_id, created_at desc);
+create index if not exists mc_game_players_game_idx   on public.mc_game_players (game_id);
 
 -- -----------------------------------------------------------------------------
 -- game_events: structured event log. `message_key` + `params` are translated on
 -- the client so the same match reads correctly in uz / ru / en.
 -- -----------------------------------------------------------------------------
-create table if not exists public.game_events (
+create table if not exists public.mc_game_events (
   id          bigint generated always as identity primary key,
-  game_id     uuid not null references public.games (id) on delete cascade,
-  lobby_id    uuid references public.lobbies (id) on delete cascade,
+  game_id     uuid not null references public.mc_games (id) on delete cascade,
+  lobby_id    uuid references public.mc_lobbies (id) on delete cascade,
   round_number integer not null default 0,
   phase       text not null default 'waiting',
   kind        text not null,
@@ -143,16 +148,16 @@ create table if not exists public.game_events (
   created_at  timestamptz not null default now()
 );
 
-create index if not exists game_events_game_idx on public.game_events (game_id, id desc);
+create index if not exists mc_game_events_game_idx on public.mc_game_events (game_id, id desc);
 
 -- -----------------------------------------------------------------------------
 -- investigations: detective results, revealed only to the owning player.
 -- -----------------------------------------------------------------------------
-create table if not exists public.investigations (
+create table if not exists public.mc_investigations (
   id          uuid primary key default gen_random_uuid(),
-  game_id     uuid not null references public.games (id) on delete cascade,
-  detective_id uuid not null references public.players (id) on delete cascade,
-  target_id   uuid not null references public.players (id) on delete cascade,
+  game_id     uuid not null references public.mc_games (id) on delete cascade,
+  detective_id uuid not null references public.mc_players (id) on delete cascade,
+  target_id   uuid not null references public.mc_players (id) on delete cascade,
   is_mafia    boolean not null,
   round_number integer not null default 1,
   created_at  timestamptz not null default now(),
@@ -173,12 +178,12 @@ begin
 end;
 $$;
 
-drop trigger if exists players_touch on public.players;
-create trigger players_touch before update on public.players
+drop trigger if exists mc_players_touch on public.mc_players;
+create trigger mc_players_touch before update on public.mc_players
   for each row execute function public.touch_updated_at();
 
-drop trigger if exists lobbies_touch on public.lobbies;
-create trigger lobbies_touch before update on public.lobbies
+drop trigger if exists mc_lobbies_touch on public.mc_lobbies;
+create trigger mc_lobbies_touch before update on public.mc_lobbies
   for each row execute function public.touch_updated_at();
 
 -- -----------------------------------------------------------------------------
@@ -188,20 +193,20 @@ create trigger lobbies_touch before update on public.lobbies
 --   re-validates every precondition inside a single transaction.
 -- -----------------------------------------------------------------------------
 create or replace function public.join_lobby(p_lobby_id uuid, p_player_id uuid)
-returns public.lobbies
+returns public.mc_lobbies
 language plpgsql security definer set search_path = public as $$
 declare
-  v_lobby public.lobbies;
+  v_lobby public.mc_lobbies;
   v_seat integer;
-  v_existing public.lobby_members;
+  v_existing public.mc_lobby_members;
   v_other integer;
 begin
-  select * into v_lobby from public.lobbies where id = p_lobby_id for update;
+  select * into v_lobby from public.mc_lobbies where id = p_lobby_id for update;
   if not found then
     raise exception 'lobby_not_found' using errcode = 'P0002';
   end if;
 
-  select * into v_existing from public.lobby_members
+  select * into v_existing from public.mc_lobby_members
    where lobby_id = p_lobby_id and player_id = p_player_id and left_at is null;
 
   if found then
@@ -212,7 +217,7 @@ begin
     raise exception 'lobby_in_progress' using errcode = 'P0001';
   end if;
 
-  select count(*) into v_other from public.lobby_members
+  select count(*) into v_other from public.mc_lobby_members
    where lobby_id = p_lobby_id and left_at is null;
   if v_other >= v_lobby.max_players then
     raise exception 'lobby_full' using errcode = 'P0001';
@@ -220,8 +225,8 @@ begin
 
   -- one active lobby per player
   if exists (
-    select 1 from public.lobby_members m
-      join public.lobbies l on l.id = m.lobby_id
+    select 1 from public.mc_lobby_members m
+      join public.mc_lobbies l on l.id = m.lobby_id
      where m.player_id = p_player_id
        and m.left_at is null
        and l.status in ('waiting', 'starting', 'playing')
@@ -229,13 +234,13 @@ begin
     raise exception 'player_in_other_lobby' using errcode = 'P0001';
   end if;
 
-  select coalesce(max(seat), 0) + 1 into v_seat from public.lobby_members
+  select coalesce(max(seat), 0) + 1 into v_seat from public.mc_lobby_members
    where lobby_id = p_lobby_id;
 
-  insert into public.lobby_members (lobby_id, player_id, seat)
+  insert into public.mc_lobby_members (lobby_id, player_id, seat)
   values (p_lobby_id, p_player_id, v_seat);
 
-  update public.lobbies
+  update public.mc_lobbies
      set version = version + 1
    where id = p_lobby_id
   returning * into v_lobby;
@@ -250,40 +255,40 @@ $$;
 create or replace function public.leave_lobby(p_lobby_id uuid, p_player_id uuid)
 returns boolean language plpgsql security definer set search_path = public as $$
 declare
-  v_lobby public.lobbies;
+  v_lobby public.mc_lobbies;
   v_remaining integer;
   v_new_host uuid;
 begin
-  select * into v_lobby from public.lobbies where id = p_lobby_id for update;
+  select * into v_lobby from public.mc_lobbies where id = p_lobby_id for update;
   if not found then return false; end if;
 
-  update public.lobby_members
+  update public.mc_lobby_members
      set left_at = now(), is_alive = false
    where lobby_id = p_lobby_id and player_id = p_player_id and left_at is null;
 
   if v_lobby.status in ('completed', 'cancelled') then
-    update public.lobbies set version = version + 1 where id = p_lobby_id;
+    update public.mc_lobbies set version = version + 1 where id = p_lobby_id;
     return true;
   end if;
 
-  select count(*) into v_remaining from public.lobby_members
+  select count(*) into v_remaining from public.mc_lobby_members
    where lobby_id = p_lobby_id and left_at is null;
 
   if v_remaining = 0 then
-    update public.lobbies
+    update public.mc_lobbies
        set status = 'cancelled', phase = 'finished', version = version + 1, finished_at = now()
      where id = p_lobby_id;
   else
     if v_lobby.host_id = p_player_id then
-      select player_id into v_new_host from public.lobby_members
+      select player_id into v_new_host from public.mc_lobby_members
        where lobby_id = p_lobby_id and left_at is null
        order by joined_at asc limit 1;
-      update public.lobbies set host_id = v_new_host where id = p_lobby_id;
-      update public.lobby_members set is_host = false where lobby_id = p_lobby_id;
-      update public.lobby_members set is_host = true
+      update public.mc_lobbies set host_id = v_new_host where id = p_lobby_id;
+      update public.mc_lobby_members set is_host = false where lobby_id = p_lobby_id;
+      update public.mc_lobby_members set is_host = true
        where lobby_id = p_lobby_id and player_id = v_new_host;
     end if;
-    update public.lobbies set version = version + 1 where id = p_lobby_id;
+    update public.mc_lobbies set version = version + 1 where id = p_lobby_id;
   end if;
 
   return true;
@@ -304,9 +309,9 @@ create or replace function public.start_game(
 )
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
-  v_lobby public.lobbies;
+  v_lobby public.mc_lobbies;
   v_game_id uuid;
-  v_members public.lobby_members[];
+  v_members public.mc_lobby_members[];
   v_role text;
   v_roles text[];
   v_mafia integer;
@@ -318,7 +323,7 @@ declare
   v_tmp text;
   v_state jsonb;
 begin
-  select * into v_lobby from public.lobbies where id = p_lobby_id for update;
+  select * into v_lobby from public.mc_lobbies where id = p_lobby_id for update;
   if not found then raise exception 'lobby_not_found' using errcode = 'P0002'; end if;
 
   if v_lobby.host_id <> p_player_id then
@@ -330,14 +335,14 @@ begin
   end if;
 
   select array_agg(m order by m.seat) into v_members
-    from public.lobby_members m
+    from public.mc_lobby_members m
    where m.lobby_id = p_lobby_id and m.left_at is null;
 
   if coalesce(array_length(v_members, 1), 0) < p_min_players then
     raise exception 'not_enough_players' using errcode = 'P0001';
   end if;
 
-  if exists (select 1 from public.games where lobby_id = p_lobby_id) then
+  if exists (select 1 from public.mc_games where lobby_id = p_lobby_id) then
     raise exception 'game_already_started' using errcode = 'P0001';
   end if;
 
@@ -372,22 +377,22 @@ begin
   -- ---- persist seats + roles ----------------------------------------------
   for i in 1..coalesce(array_length(v_members, 1), 0) loop
     v_role := v_roles[i];
-    update public.lobby_members
+    update public.mc_lobby_members
        set role = v_role, is_alive = true, left_at = null
      where lobby_id = p_lobby_id and player_id = v_members[i].player_id;
   end loop;
 
-  insert into public.games (lobby_id, status, rounds_played, player_count)
+  insert into public.mc_games (lobby_id, status, rounds_played, player_count)
   values (p_lobby_id, 'active', 0, array_length(v_members, 1))
   returning id into v_game_id;
 
   for i in 1..coalesce(array_length(v_members, 1), 0) loop
-    insert into public.game_players (game_id, player_id, role)
+    insert into public.mc_game_players (game_id, player_id, role)
     values (v_game_id, v_members[i].player_id, v_roles[i])
     on conflict (game_id, player_id) do nothing;
   end loop;
 
-  insert into public.game_events (game_id, lobby_id, round_number, phase, kind, message_key, params)
+  insert into public.mc_game_events (game_id, lobby_id, round_number, phase, kind, message_key, params)
   values (v_game_id, p_lobby_id, 1, 'night', 'system', 'event.gameStarted',
           jsonb_build_object('players', array_length(v_members, 1)));
 
@@ -397,7 +402,7 @@ begin
     'phaseStartedAt', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
   );
 
-  update public.lobbies
+  update public.mc_lobbies
      set status = 'playing', phase = 'night', round_number = 1,
          started_at = now(), state = v_state, version = version + 1
    where id = p_lobby_id
@@ -421,7 +426,7 @@ create or replace function public.finish_game(
 )
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare
-  v_game public.games;
+  v_game public.mc_games;
   v_row record;
   v_expected numeric(10, 2);
   v_actual   numeric(10, 2);
@@ -431,27 +436,27 @@ declare
   v_was_mafia boolean;
   v_changes jsonb := '[]'::jsonb;
 begin
-  select * into v_game from public.games where id = p_game_id for update;
+  select * into v_game from public.mc_games where id = p_game_id for update;
   if not found then raise exception 'game_not_found' using errcode = 'P0002'; end if;
 
   if v_game.status <> 'active' then
     return jsonb_build_object('already_finished', true, 'rating_changes', '[]'::jsonb);
   end if;
 
-  update public.games
+  update public.mc_games
      set status = 'completed', winner = p_winner,
          rounds_played = p_rounds, finished_at = now()
    where id = p_game_id;
 
-  update public.lobbies
+  update public.mc_lobbies
      set status = 'completed', phase = 'finished', winner = p_winner,
          finished_at = now(), version = version + 1, state = '{}'::jsonb
    where id = v_game.lobby_id;
 
   for v_row in
     select gp.id, gp.player_id, gp.role, gp.is_alive, p.rating, p.games_played
-      from public.game_players gp
-      join public.players p on p.id = gp.player_id
+      from public.mc_game_players gp
+      join public.mc_players p on p.id = gp.player_id
      where gp.game_id = p_game_id
   loop
     v_was_mafia := v_row.role = 'mafia';
@@ -473,12 +478,12 @@ begin
     v_delta := round((v_actual - v_expected) * v_k, 2);
     v_new_rating := greatest(100, v_row.rating + v_delta);
 
-    update public.game_players
+    update public.mc_game_players
        set won = (v_actual = 1), survived = v_row.is_alive,
            rating_delta = v_delta, rating_after = v_new_rating
      where id = v_row.id;
 
-    update public.players
+    update public.mc_players
        set games_played = games_played + 1,
            games_won    = games_won + case when v_actual = 1 then 1 else 0 end,
            games_lost   = games_lost + case when v_actual = 1 then 0 else 1 end,
@@ -504,14 +509,14 @@ $$;
 create or replace function public.cancel_game(p_game_id uuid)
 returns boolean language plpgsql security definer set search_path = public as $$
 declare
-  v_game public.games;
+  v_game public.mc_games;
 begin
-  select * into v_game from public.games where id = p_game_id for update;
+  select * into v_game from public.mc_games where id = p_game_id for update;
   if not found then return false; end if;
   if v_game.status <> 'active' then return false; end if;
 
-  update public.games set status = 'cancelled', finished_at = now() where id = p_game_id;
-  update public.lobbies
+  update public.mc_games set status = 'cancelled', finished_at = now() where id = p_game_id;
+  update public.mc_lobbies
      set status = 'cancelled', phase = 'finished', version = version + 1,
          finished_at = now(), state = '{}'::jsonb
    where id = v_game.lobby_id;
@@ -544,7 +549,7 @@ language sql stable security definer set search_path = public as $$
     ) as "rank",
     p.id, p.username, p.display_name, p.photo_url, p.rating,
     p.games_played, p.games_won, p.mafia_wins, p.town_wins
-  from public.players p
+  from public.mc_players p
   where p.games_played > 0
   order by p.rating desc, p.games_won desc, p.games_played asc, p.id asc
   limit greatest(1, least(p_limit, 200)) offset greatest(0, p_offset);
@@ -555,11 +560,11 @@ $$;
 -- -----------------------------------------------------------------------------
 create or replace function public.leaderboard_rank(p_player_id uuid)
 returns bigint language sql stable security definer set search_path = public as $$
-  select count(*) + 1 from public.players p
+  select count(*) + 1 from public.mc_players p
   where p.games_played > 0
     and (p.rating, p.games_won, -p.games_played, p.id) > (
       select q.rating, q.games_won, -q.games_played, q.id
-        from public.players q where q.id = p_player_id
+        from public.mc_players q where q.id = p_player_id
     );
 $$;
 
@@ -580,8 +585,8 @@ declare
   t text;
 begin
   foreach t in array array[
-    'players', 'lobbies', 'lobby_members', 'games',
-    'game_players', 'game_events', 'investigations'
+    'mc_players', 'mc_lobbies', 'mc_lobby_members', 'mc_games',
+    'mc_game_players', 'mc_game_events', 'mc_investigations'
   ] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('alter table public.%I force row level security', t);
@@ -619,12 +624,12 @@ declare
   t text;
 begin
   foreach t in array array[
-    'players', 'lobbies', 'lobby_members', 'games',
-    'game_players', 'game_events', 'investigations'
+    'mc_players', 'mc_lobbies', 'mc_lobby_members', 'mc_games',
+    'mc_game_players', 'mc_game_events', 'mc_investigations'
   ] loop
     execute format(
-      'drop policy if exists server_only on public.%I', t);
+      'drop policy if exists mc_server_only on public.%I', t);
     execute format(
-      'create policy server_only on public.%I as restrictive for all to anon, authenticated using (false) with check (false)', t);
+      'create policy mc_server_only on public.%I as restrictive for all to anon, authenticated using (false) with check (false)', t);
   end loop;
 end $$;
