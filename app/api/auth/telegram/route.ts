@@ -6,6 +6,7 @@ import { upsertPlayer, toProfile } from "@/lib/db/repository";
 import { isLanguage } from "@/lib/i18n";
 import { SESSION_COOKIE } from "@/lib/api/auth";
 import { clientKey, rateLimit } from "@/lib/api/rate-limit";
+import { describeDbMisconfiguration } from "@/lib/db/client";
 
 const requestSchema = z.object({
   initData: z.string().min(1).max(16_000),
@@ -19,6 +20,33 @@ function botToken(): string | null {
   return process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || null;
 }
 
+/**
+ * Log the environment state once per process so a misconfigured deployment is
+ * obvious in the platform logs without having to reproduce it from a screenshot.
+ */
+const reportedConfig = (() => {
+  const missing: string[] = [];
+  if (!botToken()) missing.push("TELEGRAM_BOT_TOKEN");
+  if (!process.env.SESSION_SECRET) missing.push("SESSION_SECRET");
+  if (!process.env.SUPABASE_URL && !process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    missing.push("SUPABASE_URL");
+  }
+  const dbProblem = describeDbMisconfiguration();
+  if (missing.length === 0 && !dbProblem) return;
+
+  console.warn(
+    [
+      "[startup] environment check",
+      missing.length > 0 ? `  missing: ${missing.join(", ")}` : null,
+      dbProblem ? `  ${dbProblem}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+  return true;
+})();
+void reportedConfig;
+
 export async function POST(request: NextRequest) {
   const token = botToken();
   if (!token) {
@@ -30,6 +58,16 @@ export async function POST(request: NextRequest) {
   if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
     return NextResponse.json(
       { error: "Server sessiya kaliti sozlanmagan.", code: "not_configured" },
+      { status: 503 },
+    );
+  }
+
+  // Fail loudly and specifically when the deployment is missing credentials.
+  const misconfigured = describeDbMisconfiguration();
+  if (misconfigured) {
+    console.error(`[auth/telegram] ${misconfigured}`);
+    return NextResponse.json(
+      { error: "database_not_configured", code: "database_not_configured" },
       { status: 503 },
     );
   }

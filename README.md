@@ -13,6 +13,41 @@ Multiplayer Mafia for Telegram, built with the Next.js App Router and Supabase.
 - The interface is multilingual (uz / ru / en), mobile-first, and tested with a
   real browser at six viewports.
 
+## Diagnosing a deployment
+
+`/api/health` is the single source of truth. It touches the database and names
+the exact problem instead of returning a generic error:
+
+```sh
+curl -s https://your-app.vercel.app/api/health | jq
+```
+
+| `status` | Meaning | Fix |
+| --- | --- | --- |
+| `healthy` | Everything is wired up. | — |
+| `healthy_without_service_role_key` | The app can read, but the anon key has no table access. | Add `SUPABASE_SERVICE_ROLE_KEY`. |
+| `degraded` + `misconfiguration` | A required environment variable is missing. | Read `misconfiguration`; it names the variable. |
+
+### "The server is not fully configured" in the app
+
+That message means the deployment has **no `SUPABASE_SERVICE_ROLE_KEY`**. Every
+table is behind Row Level Security, so without a server-only key the app can
+read nothing and every sign-in fails.
+
+On Vercel: **Project → Settings → Environment Variables → add it for Production
+(and Preview) → Redeploy.** Changing an environment variable always requires a
+new deployment to take effect.
+
+On Render: `render.yaml` already declares the variable; set its value in the
+dashboard.
+
+To confirm which build is live and whether the server is configured:
+
+```sh
+npm run test:config   # boots a healthy server, then one without the key,
+                      # and asserts the failure is reported precisely
+```
+
 ## Requirements
 
 - Node.js `>=20.9 <23` and npm.

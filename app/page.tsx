@@ -16,6 +16,7 @@ import {
   TopBar,
 } from "@/components/ui";
 import { postLobbyAction } from "@/components/use-lobby";
+import { getCopy } from "@/lib/i18n";
 import { MAX_PLAYERS, MIN_PLAYERS } from "@/lib/game/constants";
 import type { LobbySummary, LobbyView } from "@/lib/types";
 
@@ -381,6 +382,28 @@ function HomeScreen({ onJoined }: { onJoined: (lobby: LobbyView) => void }) {
   );
 }
 
+/**
+ * Turns an auth failure code into something a person can act on. A raw code
+ * like `profile_persist_failed` told the user nothing.
+ */
+function describeAuthError(code: string, t: ReturnType<typeof getCopy>): string {
+  switch (code) {
+    case "database_not_configured":
+      return t.serverMisconfigured;
+    case "database_unavailable":
+      return t.databaseUnavailable;
+    case "telegram_signature_invalid":
+    case "invalid":
+      return t.authError;
+    case "network":
+      return t.connectionLost;
+    case "not_configured":
+      return t.serverMisconfigured;
+    default:
+      return t.genericError;
+  }
+}
+
 function joinErrorMessage(code?: string, errorCode?: string): string {
   switch (errorCode ?? code) {
     case "not_found":
@@ -428,7 +451,7 @@ export default function HomePage() {
           <p className="eyebrow">{t.title}</p>
           <h1>{t.connectionTitle}</h1>
           <p className="gate-body">{t.connectionBody}</p>
-          {authError ? <p className="gate-error">{authError}</p> : null}
+          {authError ? <p className="gate-error">{describeAuthError(authError, t)}</p> : null}
           <div className="gate-actions">
             <a className="primary-button" href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer">
               {t.openTelegram} <ArrowRight size={17} />
@@ -455,7 +478,7 @@ export default function HomePage() {
           <h1>{t.notInTelegram}</h1>
           <p className="gate-body">{t.connectionBody}</p>
           {authError && authError !== "init_data_missing" ? (
-            <p className="gate-error">{authError}</p>
+            <p className="gate-error">{describeAuthError(authError, t)}</p>
           ) : null}
           <div className="gate-actions">
             <a className="primary-button" href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer">
