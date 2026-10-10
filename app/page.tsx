@@ -427,22 +427,22 @@ export default function Home() {
     citizen: UsersRound,
   };
 
-  // if (outsideTelegram) {
-  //   return (
-  //     <main className="outside-screen">
-  //       <div className="outside-card">
-  //         <span className="brand-mark"><Moon size={25} /></span>
-  //         <p className="eyebrow">{t.title}</p>
-  //         <h1>{t.authHint}</h1>
-  //         {notice && <p className="auth-error" role="alert">{notice}</p>}
-  //         <a className="primary-button" href={botUrl} target="_blank" rel="noreferrer">
-  //           {t.openTelegram}<ArrowRight size={17} />
-  //         </a>
-  //         <p className="fine-print">@{process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "mafiauz_robot"}</p>
-  //       </div>
-  //     </main>
-  //   );
-  // }
+  if (outsideTelegram) {
+    return (
+      <main className="outside-screen">
+        <div className="outside-card">
+          <span className="brand-mark"><Moon size={25} /></span>
+          <p className="eyebrow">{t.title}</p>
+          <h1>{t.authHint}</h1>
+          {notice && <p className="auth-error" role="alert">{notice}</p>}
+          <a className="primary-button" href={botUrl} target="_blank" rel="noreferrer">
+            {t.openTelegram}<ArrowRight size={17} />
+          </a>
+          <p className="fine-print">@{process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME || "mafiauz_robot"}</p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="app-background">
