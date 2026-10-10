@@ -13,6 +13,9 @@
 # testing
 /coverage
 
+# local artefacts produced by the test suites
+/.screenshots
+
 # next.js
 /.next/
 /out/

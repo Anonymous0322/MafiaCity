@@ -9,11 +9,20 @@
     "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --test-reporter=spec tests/game-engine.test.ts tests/telegram-auth.test.ts tests/i18n.test.ts tests/security.test.ts tests/statistics.test.ts",
+    "test:e2e": "node tests/e2e.mjs",
+    "test:layout": "node tests/layout.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:check": "node scripts/db-check.mjs",
+    "db:lint": "node scripts/lint-sql.mjs",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run test:secrets && npm run db:lint && npm run build",
+    "test:secrets": "node tests/secrets-scan.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",
-    "lucide-react": "^1.53.0",
+    "lucide-react": "^1.54.0",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -22,11 +31,16 @@
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.4.0",
+    "pg": "^8.23.1",
+    "pgsql-parser": "^18.2.10",
+    "puppeteer-core": "^24.43.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
