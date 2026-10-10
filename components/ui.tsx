@@ -29,11 +29,14 @@ export function Avatar({
 }: {
   name: string;
   avatar?: string | null;
-  size?: "normal" | "small" | "large";
+  size?: "normal" | "small" | "large" | "hero";
   className?: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const showImage = Boolean(avatar) && !failed;
+  // A previous render may have loaded a different URL; reset the error state
+  // when the source changes so a new photo is not stuck on the letter.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = Boolean(avatar) && failedUrl !== avatar;
+
   return (
     <span className={`avatar avatar-${size} ${className}`} aria-label={name} role="img">
       {showImage ? (
@@ -44,7 +47,7 @@ export function Avatar({
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
+          onError={() => setFailedUrl(avatar as string)}
         />
       ) : (
         name.slice(0, 1).toLocaleUpperCase()

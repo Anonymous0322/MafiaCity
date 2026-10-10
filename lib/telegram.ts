@@ -119,11 +119,18 @@ export function authenticateTelegramInitData(
 }
 
 /**
- * Display name resolution required by the spec: prefer the Telegram username,
- * otherwise fall back to first + last name.
+ * Display name resolution.
+ *
+ * The nickname (first + last name) is the primary label: that is what a person
+ * calls themselves. The `@username` is kept separately as a handle and shown
+ * as secondary text, and is only used as a last-resort label when Telegram
+ * gives no name at all.
  */
 export function resolveDisplayName(user: TelegramUserPayload): string {
-  if (user.username) return user.username;
-  const full = [user.first_name, user.last_name].filter(Boolean).join(" ").trim();
-  return full || "Telegram player";
+  return resolveNickname(user) || user.username || "Telegram player";
+}
+
+/** The nickname alone, or "" when Telegram gave us no name at all. */
+export function resolveNickname(user: TelegramUserPayload): string {
+  return [user.first_name, user.last_name].filter(Boolean).join(" ").trim();
 }

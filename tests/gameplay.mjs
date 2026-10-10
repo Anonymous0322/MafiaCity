@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { purgeTestRows as sharedPurge } from "./lib/purge.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -42,7 +43,25 @@ function killTree(proc) {
     spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { stdio: "ignore" });
   } else proc.kill("SIGTERM");
 }
-process.on("exit", () => killTree(child));
+
+/**
+ * Test data must never survive a run: the leaderboard and the room list are
+ * user-facing, and leftover `smoke_*` rows make both look broken.
+ */
+const cleanup = { players: new Set(), lobbies: new Set() };
+
+async function purgeTestRows() {
+  await sharedPurge({
+    players: [...cleanup.players],
+    lobbies: [...cleanup.lobbies],
+  });
+}
+
+const results = [];
+function check(name, ok, detail = "") {
+  results.push({ name, ok });
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
+}
 
 const port = 4900 + Math.floor(Math.random() * 90);
 child = spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "start", "--", "-p", String(port)], {
@@ -65,12 +84,6 @@ for (let i = 0; i < 90; i += 1) {
 }
 if (!up) { killTree(child); throw new Error("server did not start"); }
 console.log(`[gameplay] target ${base}`);
-
-const results = [];
-function check(name, ok, detail = "") {
-  results.push({ name, ok });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
-}
 
 /* ------------------------------------------------------------------ auth --- */
 
@@ -105,17 +118,29 @@ async function signIn(index) {
   if (!response.ok || !body.player) {
     throw new Error(`sign-in failed for ${name}: HTTP ${response.status} ${JSON.stringify(body)}`);
   }
+  cleanup.players.add(body.player.id);
   const cookie = (response.headers.get("set-cookie") ?? "").split(";")[0];
-  return { name, id: body.player.id, cookie, displayName: body.player.name };
+  return {
+    name,
+    id: body.player.id,
+    cookie,
+    displayName: body.player.name,
+    username: body.player.username,
+  };
 }
 
 const players = [];
 for (let i = 0; i < NAMES.length; i += 1) players.push(await signIn(i));
 check("6 players signed in through the real Telegram handshake", players.length === 6);
 check(
-  "display name resolves to the Telegram username",
-  players.every((player) => player.displayName.startsWith("smoke_")),
-  players[0].displayName,
+  "display name is the nickname, not the @username",
+  players.every((player) => player.displayName === `${player.name} Tester`),
+  `${players[0].name} -> "${players[0].displayName}"`,
+);
+check(
+  "the @username is kept as a separate handle",
+  players.every((player) => String(player.username).startsWith("smoke_")),
+  players[0].username,
 );
 
 /* ------------------------------------------------------------------- api --- */
@@ -155,10 +180,11 @@ async function readLobby(player, code, label = "") {
 
 /* ---------------------------------------------------------------- lobby ---- */
 
-process.on("uncaughtException", (error) => {
+process.on("uncaughtException", async (error) => {
   console.log("\n!! uncaught:", error?.message ?? String(error));
   console.log("---- server log ----");
   console.log(serverLog.split("\n").slice(-80).join("\n"));
+  await purgeTestRows();
   killTree(child);
   process.exit(1);
 });
@@ -172,10 +198,12 @@ const created = await call(players[0], {
 check("host can create a lobby", created.status === 201, `HTTP ${created.status} ${created.body?.error ?? ""}`);
 const code = created.body?.lobby?.code;
 const lobbyId = created.body?.lobby?.id;
+if (lobbyId) cleanup.lobbies.add(lobbyId);
 if (!code) {
   console.log(JSON.stringify(created.body));
   console.log("---- server log ----");
   console.log(serverLog.split("\n").slice(-60).join("\n"));
+  await purgeTestRows();
   killTree(child);
   process.exit(1);
 }
@@ -366,12 +394,10 @@ check("leaving the room works", leaveResponse.status === 200, `HTTP ${leaveRespo
 
 /* ---------------------------------------------------------------- report -- */
 
+await purgeTestRows();
+
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\n${results.length - failed.length}/${results.length} gameplay checks passed.`);
-if (failed.length > 0) {
-  console.log("\n---- server log ----");
-  console.log(serverLog.split("\n").filter((l) => /error|Error|\[db\]|\[api\]/.test(l)).slice(-40).join("\n"));
-}
 if (failed.length > 0) {
   console.log("\n---- server log ----");
   console.log(serverLog.split("\n").filter((l) => /error|Error|\[db\]|\[api\]/.test(l)).slice(-40).join("\n"));

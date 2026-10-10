@@ -5,6 +5,7 @@ import {
   authenticateTelegramInitData,
   parseTelegramInitData,
   resolveDisplayName,
+  resolveNickname,
   verifyTelegramInitData,
 } from "@/lib/telegram";
 
@@ -125,23 +126,32 @@ test("start_param survives verification", () => {
 /* display name resolution — the reported "..." bug                            */
 /* -------------------------------------------------------------------------- */
 
-test("display name prefers the Telegram username", () => {
+test("display name prefers the Telegram nickname over the username", () => {
   const name = resolveDisplayName({
     id: 1,
     first_name: "Alisher",
     last_name: "Karimov",
     username: "alisher",
   });
-  assert.equal(name, "alisher");
+  assert.equal(name, "Alisher Karimov");
+  assert.notEqual(name, "alisher");
   assert.notEqual(name, "...");
 });
 
-test("display name falls back to first + last name without a username", () => {
-  assert.equal(
-    resolveDisplayName({ id: 1, first_name: "Alisher", last_name: "Karimov" }),
-    "Alisher Karimov",
-  );
-  assert.equal(resolveDisplayName({ id: 1, first_name: "Alisher" }), "Alisher");
+test("display name keeps a single-word nickname intact", () => {
+  assert.equal(resolveDisplayName({ id: 1, first_name: "Alisher", username: "ali" }), "Alisher");
+});
+
+test("the username is only a last-resort label when there is no name at all", () => {
+  assert.equal(resolveDisplayName({ id: 1, first_name: "", username: "ali" }), "ali");
+  assert.equal(resolveDisplayName({ id: 1, first_name: "" }), "Telegram player");
+});
+
+test("resolveNickname is empty without a name, so the stored name is kept", () => {
+  assert.equal(resolveNickname({ id: 1, first_name: "Alisher", last_name: "Karimov" }), "Alisher Karimov");
+  assert.equal(resolveNickname({ id: 1, first_name: "Alisher", username: "ali" }), "Alisher");
+  assert.equal(resolveNickname({ id: 1, first_name: "", username: "ali" }), "");
+  assert.equal(resolveNickname({ id: 1, first_name: "   " }), "");
 });
 
 test("display name never collapses to an ellipsis", () => {

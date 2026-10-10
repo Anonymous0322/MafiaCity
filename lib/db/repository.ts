@@ -243,7 +243,12 @@ export type TelegramProfileInput = {
   username?: string;
   firstName: string;
   lastName?: string;
-  displayName: string;
+  /**
+   * Optional on purpose. When Telegram sends no usable name we pass `undefined`
+   * so the column is left out of the statement and an already-good nickname
+   * survives the login instead of being replaced by the @handle.
+   */
+  displayName?: string;
   photoUrl?: string;
   language?: Language;
 };
@@ -253,21 +258,34 @@ export type TelegramProfileInput = {
  * server-validated `initData`, never from the client body.
  */
 export async function upsertPlayer(input: TelegramProfileInput): Promise<PlayerRow> {
+  // A login without a nickname must not replace a good stored name with the
+  // @handle, so fall back to whatever is already on the account.
+  let displayName = input.displayName;
+  if (!displayName) {
+    const existing = await db()
+      .from("mc_players")
+      .select("display_name")
+      .eq("telegram_id", input.telegramId)
+      .maybeSingle();
+    if (existing.error) throw translatePgError(existing.error);
+    displayName =
+      (existing.data?.display_name as string | null) ??
+      input.username ??
+      "Telegram player";
+  }
+  const row = {
+    telegram_id: input.telegramId,
+    username: input.username ?? null,
+    first_name: input.firstName,
+    last_name: input.lastName ?? null,
+    photo_url: input.photoUrl ?? null,
+    language: input.language ?? "uz",
+    last_seen_at: new Date().toISOString(),
+    display_name: displayName,
+  };
   const { data, error } = await db()
     .from("mc_players")
-    .upsert(
-      {
-        telegram_id: input.telegramId,
-        username: input.username ?? null,
-        first_name: input.firstName,
-        last_name: input.lastName ?? null,
-        display_name: input.displayName,
-        photo_url: input.photoUrl ?? null,
-        language: input.language ?? "uz",
-        last_seen_at: new Date().toISOString(),
-      },
-      { onConflict: "telegram_id" },
-    )
+    .upsert(row, { onConflict: "telegram_id" })
     .select()
     .single();
   if (error) throw translatePgError(error);

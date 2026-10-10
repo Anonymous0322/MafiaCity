@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { purgeTestRows } from "./lib/purge.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -112,6 +113,13 @@ function signInitData(user, botToken = BOT_TOKEN) {
   return new URLSearchParams({ ...payload, hash }).toString();
 }
 
+const created = new Set();
+
+/** A real sign-in creates a real player row; remove it afterwards. */
+async function purge() {
+  await purgeTestRows({ players: [...created] });
+}
+
 const results = [];
 function check(name, ok, detail = "") {
   results.push({ name, ok });
@@ -163,8 +171,14 @@ if (!BOT_TOKEN) {
   const cookie = valid.headers.get("set-cookie") ?? "";
   if (dbReady) {
     check("auth accepts valid initData", valid.status === 200 && Boolean(valid.body?.player?.id), `HTTP ${valid.status}`);
-    check("auth returns the resolved display name", valid.body?.player?.name === "e2e_player", String(valid.body?.player?.name));
+    check(
+      "auth returns the nickname, not the @username",
+      valid.body?.player?.name === "Test Player",
+      String(valid.body?.player?.name),
+    );
+    check("the @username is kept as a separate handle", valid.body?.player?.username === "e2e_player", String(valid.body?.player?.username));
     check("auth sets an HttpOnly session cookie", /session=/.test(cookie) && /HttpOnly/i.test(cookie));
+    if (valid.body?.player?.id) created.add(valid.body.player.id);
   } else {
     check(
       "auth fails closed when the database is unavailable",
@@ -352,6 +366,8 @@ check(
 );
 
 /* -------------------------------------------------------------------------- */
+
+await purge();
 
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\n${results.length - failed.length}/${results.length} e2e checks passed.`);

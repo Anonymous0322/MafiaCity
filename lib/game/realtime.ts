@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
 import { WebSocket } from "ws";
 import { getDbConfig } from "@/lib/db/client";
+import { REALTIME_CHANNEL, REALTIME_EVENT, type LobbyPing } from "@/lib/game/realtime-channel";
 
 /**
  * Realtime fan-out for lobby updates.
@@ -53,7 +54,7 @@ function ensureChannel(): Promise<boolean> {
   const supabase = getClient();
   if (!supabase) return Promise.resolve(false);
 
-  const created = supabase.channel("mafia-notify");
+  const created = supabase.channel(REALTIME_CHANNEL);
   channel = created;
 
   ready = new Promise<boolean>((resolve) => {
@@ -83,13 +84,6 @@ function ensureChannel(): Promise<boolean> {
   return ready;
 }
 
-export type LobbyPing = {
-  lobbyId: string;
-  version: number;
-  reason: string;
-  at: string;
-};
-
 /** Fire-and-forget: a realtime hiccup must never break a gameplay request. */
 export async function publishLobbyChange(
   lobbyId: string,
@@ -106,7 +100,7 @@ export async function publishLobbyChange(
       reason,
       at: new Date().toISOString(),
     };
-    await channel.send({ type: "broadcast", event: "lobby", payload: ping });
+    await channel.send({ type: "broadcast", event: REALTIME_EVENT, payload: ping });
 
     // release the socket when the room goes quiet
     if (idleTimer) clearTimeout(idleTimer);

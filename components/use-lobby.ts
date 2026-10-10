@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
+import {
+  isPingForLobby,
+  REALTIME_CHANNEL,
+  REALTIME_EVENT,
+} from "@/lib/game/realtime-channel";
 import type { LobbyView } from "@/lib/types";
 
 type State = {
@@ -111,20 +117,25 @@ export function useLobby(lobbyId: string | null) {
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!url || !key) return;
 
-    let channel: { unsubscribe: () => void } | null = null;
+    let channel: RealtimeChannel | null = null;
+    let client: SupabaseClient | null = null;
     let cancelled = false;
 
     void (async () => {
       try {
         const { createClient } = await import("@supabase/supabase-js");
-        const client = createClient(url, key, {
+        const supabase = createClient(url, key, {
           auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
         });
         if (cancelled) return;
-        const created = client
-          .channel(`lobby:${lobbyId}`)
-          .on("broadcast", { event: "lobby" }, () => {
-            void load({ silent: true });
+        client = supabase as SupabaseClient;
+        // same channel the server publishes on; the lobby id is in the payload
+        const created = supabase
+          .channel(REALTIME_CHANNEL)
+          .on("broadcast", { event: REALTIME_EVENT }, (message) => {
+            if (isPingForLobby(message?.payload, lobbyId)) {
+              void load({ silent: true });
+            }
           })
           .subscribe();
         channel = created;
@@ -136,6 +147,7 @@ export function useLobby(lobbyId: string | null) {
     return () => {
       cancelled = true;
       channel?.unsubscribe();
+      if (channel && client) client.removeChannel(channel);
     };
   }, [lobbyId, load]);
 

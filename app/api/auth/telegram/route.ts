@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateTelegramInitData, resolveDisplayName } from "@/lib/telegram";
+import { authenticateTelegramInitData, resolveNickname } from "@/lib/telegram";
 import { createSessionToken } from "@/lib/session";
 import { upsertPlayer, toProfile } from "@/lib/db/repository";
 import { isLanguage } from "@/lib/i18n";
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { user } = auth.data;
-  const displayName = resolveDisplayName(user);
+  const nickname = resolveNickname(user);
   const languageHint = isLanguage(parsed.data.language)
     ? parsed.data.language
     : isLanguage(user.language_code)
@@ -121,7 +121,7 @@ export async function POST(request: NextRequest) {
       username: user.username,
       firstName: user.first_name,
       lastName: user.last_name,
-      displayName,
+      displayName: nickname || undefined,
       photoUrl: user.photo_url,
       language: languageHint,
     });

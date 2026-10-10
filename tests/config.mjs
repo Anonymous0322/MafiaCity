@@ -13,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHmac } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { purgeTestRows } from "./lib/purge.mjs";
 import puppeteer from "puppeteer-core";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,6 +35,13 @@ const env = { ...loadEnvFile(path.join(root, ".env.local")), ...loadEnvFile(path
 if (!env.SUPABASE_SERVICE_ROLE_KEY) {
   console.log("[config] SUPABASE_SERVICE_ROLE_KEY is not set locally — nothing to simulate.");
   process.exit(0);
+}
+
+const created = new Set();
+
+/** This test signs in for real, so it must not leave players behind. */
+async function purge() {
+  await purgeTestRows({ players: [...created] });
 }
 
 const results = [];
@@ -102,6 +110,7 @@ const goodAuth = await fetch(`${good.base}/api/auth/telegram`, {
 });
 const goodAuthBody = await goodAuth.json();
 check("sign-in succeeds with the service-role key present", goodAuth.status === 200 && Boolean(goodAuthBody.player?.id), `HTTP ${goodAuth.status}`);
+if (goodAuthBody.player?.id) created.add(goodAuthBody.player.id);
 
 killTree(good.child);
 await new Promise((r) => setTimeout(r, 1500));
@@ -182,6 +191,7 @@ if (CHROME) {
 
 killTree(broken.child);
 await new Promise((r) => setTimeout(r, 500));
+await purge();
 
 const failed = results.filter((entry) => !entry.ok);
 console.log(`\n${results.length - failed.length}/${results.length} configuration checks passed.`);

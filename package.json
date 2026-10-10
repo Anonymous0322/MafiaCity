@@ -20,9 +20,14 @@
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:secrets && npm run db:lint && npm run build",
     "test:secrets": "node tests/secrets-scan.mjs",
     "test:gameplay": "node tests/gameplay.mjs",
-    "verify:full": "npm run verify && npm run test:e2e && npm run test:layout && npm run test:navigation && npm run test:gameplay && npm run test:config",
+    "verify:full": "npm run verify && npm run test:e2e && npm run test:layout && npm run test:navigation && npm run test:profile && npm run test:gameplay && npm run test:config && npm run test:realtime",
     "test:navigation": "node tests/navigation.mjs",
-    "test:config": "node tests/config.mjs"
+    "test:config": "node tests/config.mjs",
+    "deploy:env": "node scripts/sync-vercel-env.mjs",
+    "check:deploy": "node scripts/check-deploy.mjs",
+    "db:clean": "node scripts/clean-test-data.mjs",
+    "test:profile": "node tests/profile.mjs",
+    "test:realtime": "node tests/realtime.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",

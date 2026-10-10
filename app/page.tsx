@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "@/app/providers";
 import {
+  Avatar,
   CopyCodeButton,
   EmptyState,
   Loader,
@@ -122,7 +123,6 @@ function HomeScreen({ onJoined }: { onJoined: (lobby: LobbyView) => void }) {
   }
 
   const displayName = profile?.name ?? "…";
-  const hasAvatar = Boolean(profile?.avatar);
 
   return (
     <>
@@ -133,17 +133,11 @@ function HomeScreen({ onJoined }: { onJoined: (lobby: LobbyView) => void }) {
             <span className="live-dot" /> {t.online}
           </span>
           <div className="hero-identity">
-            {hasAvatar ? (
-              <span
-                className="hero-avatar"
-                style={{ backgroundImage: `url("${profile?.avatar}")` }}
-                aria-hidden="true"
-              />
-            ) : (
-              <span className="hero-avatar hero-avatar-fallback" aria-hidden="true">
-                {displayName.slice(0, 1).toLocaleUpperCase()}
-              </span>
-            )}
+            <Avatar
+              name={displayName}
+              avatar={profile?.avatar}
+              size="hero"
+            />
             <h1 title={displayName}>{displayName}</h1>
           </div>
           <p>{t.howDescription}</p>
